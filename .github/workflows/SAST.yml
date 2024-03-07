@@ -92,10 +92,10 @@ jobs:
       #     file: ./docker-compose.yaml
       #     load: true # Required for docker-compose
 
-      - name: Build and push with Docker Compose
+      - name: Build and push Docker images
         run: |
-          docker-compose build -t ghcr.io/${{ env.REPO }}:${{ github.sha }}
-          docker-compose push
+          docker-compose -f ./docker-compose.yaml build
+          docker-compose -f ./docker-compose.yaml push
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
