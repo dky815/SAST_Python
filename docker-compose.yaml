@@ -1,6 +1,7 @@
 version: "3.9"
 services:
   backend:
+    image: ghcr.io/dky815/DevSecOps_Python:${IMAGE_TAG}
     build: ./backend_service/.
     ports:
       - "9090:9090"

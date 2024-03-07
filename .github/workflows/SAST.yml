@@ -93,6 +93,8 @@ jobs:
       #     load: true # Required for docker-compose
 
       - name: Build and push Docker images
+        env:
+          IMAGE_TAG: ${{ github.sha }}
         run: |
           docker-compose -f ./docker-compose.yaml build
           docker-compose -f ./docker-compose.yaml push
