@@ -88,7 +88,7 @@ jobs:
         with:
           push: true
           tags: ghcr.io/${{ env.REPO }}:${{ github.sha }}
-          file: ./backend_service/Dockerfile    
+          file: ./docker-compose.yaml    
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
