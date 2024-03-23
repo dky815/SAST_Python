@@ -12,68 +12,97 @@ How:
 Research on common SQL and JWT issues and bypasses.
 """
 
-from flask import Flask, request, make_response
+from flask import Flask, request, make_response, jsonify
 import jwt
 import pickle
+from http import HTTPStatus
 import sqlite3
 import logging
+import os
 from utils.db_utils import DatabaseUtils
 from utils.file_storage import FileStorage
+from werkzeug.security import generate_password_hash
+from datetime import timedelta
+import datetime
+
+logging.basicConfig(level=logging.DEBUG,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    filename='app.log',
+                    filemode='a')
 
 app = Flask(__name__)
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)  # Session timeout
+app.config['WTF_CSRF_ENABLED'] = False
 
-SECRET_KEY = "secret_key"
+# Removed the hardcoded secret with a random secure key
+SECRET_KEY = os.urandom(17)
 
 logging.basicConfig(level=logging.INFO)
 db = DatabaseUtils()
 fs = FileStorage()
 
 def _init_app():
-    db.update_data("DROP TABLE IF EXISTS users;")
+    db.update_data("DROP TABLE IF EXISTS users;", [])
     db.update_data('''CREATE TABLE IF NOT EXISTS users (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                             username TEXT NOT NULL,
                             password TEXT NOT NULL,
                             privilege INTEGER
-                        );''')
-    db.update_data("INSERT INTO users (username, password, privilege) VALUES ('user1', 'password1', 0)")
-    db.update_data("INSERT INTO users (username, password, privilege) VALUES ('admin1', 'adminpassword1', 1)")
-        
+                        );''', [])
+
+    # Encrypt the password before storing
+    admin_password = generate_password_hash('password1')
+    user_password = generate_password_hash('adminpassword1')
+
+    db.update_data(f"INSERT INTO users (username, password, privilege) VALUES (?,?,?)", ['user1', user_password, 0])
+    db.update_data(f"INSERT INTO users (username, password, privilege) VALUES (?,?,?)", ['admin1', admin_password,1])
+
+def get_token_expiry_time():
+    return datetime.datetime.utcnow() + datetime.timedelta(minutes=20)
 
 def _check_login():
     auth_token = request.cookies.get('token', None)
     if not auth_token:
-        raise "Missing token cookie"
+        app.logger.error("Missing token cookie")
+        return jsonify({'error': "Missing token cookie"}), HTTPStatus.UNAUTHORIZED
     try:
         # Decode JWT token
-        token = auth_token[len(auth_token)//2:] + auth_token[:len(auth_token)//2]
-        data = jwt.decode(pickle.loads(bytes.fromhex(token)), SECRET_KEY, algorithms=["HS256"])
+        data = jwt.decode(auth_token, SECRET_KEY, algorithms=["HS256"])
+        if isinstance(data, dict):
+            return data
+        else:
+            app.logger.error("Invalid token structure")
+            return jsonify({'error': "Invalid token structure"}), HTTPStatus.UNAUTHORIZED
     except jwt.DecodeError:
-        raise "Token is invalid"
-    return data
+        app.logger.error("Token is invalid")
+        return jsonify({'error': "Token is invalid"}), HTTPStatus.UNAUTHORIZED
 
 
 @app.route("/login", methods=["POST"])
 def login():
     username = request.json.get("username")
     password = request.json.get("password")
-
-    rows = db.fetch_data(f"SELECT * FROM users where username='{username}' AND password='{password}'")
+    hashed_password = generate_password_hash(password)
+    # use hashed password and username to check if the user exists.
+    rows = db.fetch_data(f"SELECT * FROM users where username= ? AND password= ?", [username, hashed_password])
 
     if len(rows) != 1:
-        return "Invalid credentials"
-    
-    token = jwt.encode({ "username": username }, SECRET_KEY, algorithm="HS256")
-    obfuscate1 = pickle.dumps(token.encode())
-    obfuscate2 = obfuscate1.hex()
-    obfuscate3 = obfuscate2[len(obfuscate2)//2:] + obfuscate2[:len(obfuscate2)//2]
-    # Everyone knows how to read JWT tokens these days. The team decided to obfuscate it as a pickle and
-    # some fancy tricks so nobody can tell we're using JWT and can't exploit us using common JWT exploits :D
-    # Devs knowing some security sure is useful! :P
+        app.logger.error("Invalid credentials")
+        return jsonify({'error': "Invalid credentials"}), HTTPStatus.UNAUTHORIZED
 
+    is_user_admin = True if rows[0][-1] == 1 else False
+    expiry_time = get_token_expiry_time()
+    token = jwt.encode({ 
+        "username": username ,
+        "is_admin": is_user_admin,
+        "expiry": expiry_time
+    }, SECRET_KEY, algorithm="HS256")
+
+    # We are only setting 1 http cookie which will have information along with the expiration time
     res = make_response()
-    res.set_cookie("token", value=obfuscate3)
-    res.set_cookie("admin", value='true' if rows[0][-1]==1 else 'false')
+    res.set_cookie("token", value=token, expires=expiry_time, httponly=True, secure=True, samesite="strict",)
 
     return res
 
@@ -84,31 +113,45 @@ def store_file():
     Only admins can upload/delete files.
     All users can read files.
     """
-    try:
-        data = _check_login()
-    except:
-        return "Not logged in"
+    # We are handling the scenario if user is not logged it. Not raising the error from _check_login function.
+    data = _check_login()
+    ## User is not logged in
+    ## NEED TO TEST THIS OUT, this method will change
+    if isinstance(data, jsonify):
+        app.logger.error("Failed to authenticate user")
+        return jsonify({'error': "Failed to authenticate user"}), HTTPStatus.UNAUTHORIZED
 
-    is_admin = True if request.cookies.get('admin', 'false')=='true' else False
+    is_admin = data["is_admin"]
+    expiry_time = data["expiry"]
+    if expiry_time < datetime.datetime.utcnow():
+        app.logger.error("Authentication token has expired, login again")
+        return jsonify({'error': "Authentication token has expired, login again"}), HTTPStatus.UNAUTHORIZED
 
     if request.method == 'GET':
         filename = request.args.get('filename')
         return fs.get(filename)
     elif request.method == 'POST':
-        if not is_admin: return "Need admin access"
+        if not is_admin:
+            app.logger.error("Need admin access")
+            return jsonify({'error': "Need admin access"}), HTTPStatus.UNAUTHORIZED
+
         uploaded_files = request.files
-        logging.error(uploaded_files)
         for f in uploaded_files:
             fs.store(uploaded_files[f].name, uploaded_files[f].read())
-            logging.info(f'Uploaded filename: {uploaded_files[f].name}')
-        return "Files uploaded successfully"
+        app.logger.info("Files uploaded successfully")
+        return jsonify({'info': "Files uploaded successfully"}), HTTPStatus.OK
     elif request.method == 'DELETE':
-        if not is_admin: return "Need admin access"
+        if not is_admin:
+            app.logger.error("Need admin access")
+            return jsonify({'error': "Need admin access"}), HTTPStatus.UNAUTHORIZED
+
         filename = request.args.get('filename')
         fs.delete(filename)
-        return f"{filename} deleted successfully"
+        app.logger.info(f"{filename} deleted successfully")
+        return jsonify({'info': f"{filename} deleted successfully"}), HTTPStatus.OK
     else:
-        return "Method not implemented"
+        app.logger.error("Method not implemented")
+        return jsonify({'error': "Method not implemented"}), HTTPStatus.BAD_REQUEST
 
 
 if __name__ == "__main__":
