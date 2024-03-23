@@ -24,10 +24,6 @@ jobs:
     - name: Autobuild
       uses: github/codeql-action/autobuild@v3
 
-    # - name: Custom build
-    #   run: |
-    #     g++ -g -std=c++17 -o fileserver main.cpp -lssl -lcrypto -I ./
-
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
 
@@ -128,3 +124,14 @@ jobs:
   #       uses: github/codeql-action/upload-sarif@v3
   #       with:
   #         sarif_file: snyk.sarif
+
+  Gitleaks:
+    permissions: write-all
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
