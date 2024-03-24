@@ -11,8 +11,9 @@ Questions:
 How: 
 Research on common SQL and JWT issues and bypasses.
 """
+import os
 
-from flask import Flask, request, make_response
+from flask import Flask, request, make_response, escape, jsonify
 import jwt
 import pickle
 import sqlite3
@@ -58,7 +59,10 @@ def login():
     username = request.json.get("username")
     password = request.json.get("password")
 
-    rows = db.fetch_data(f"SELECT * FROM users where username='{username}' AND password='{password}'")
+    # Use parameterized queries to prevent SQL injection
+    query = "SELECT * FROM users WHERE username = ? AND password = ?"
+    params = (username, password)
+    rows = db.fetch_data(query, params)
 
     if len(rows) != 1:
         return "Invalid credentials"
@@ -104,13 +108,14 @@ def store_file():
         return "Files uploaded successfully"
     elif request.method == 'DELETE':
         if not is_admin: return "Need admin access"
-        filename = request.args.get('filename')
+        filename = escape(request.args.get('filename'))
         fs.delete(filename)
-        return f"{filename} deleted successfully"
+        return jsonify({"message": f"{filename} deleted successfully"})
     else:
         return "Method not implemented"
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     _init_app()
-    app.run(host='0.0.0.0', debug=True, port=9090)
+    debug_mode = os.environ.get('FLASK_DEBUG', 'False') == 'True'
+    app.run(host='0.0.0.0', debug=debug_mode, port=9090)
