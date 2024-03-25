@@ -168,6 +168,5 @@ def store_file():
 
 if __name__ == '__main__':
     _init_app()
-    # debug_mode = os.environ.get('FLASK_DEBUG', 'False') == 'True'
-    debug_mode = True
+    debug_mode = os.environ.get('FLASK_DEBUG', 'False') == 'True'
     app.run(host='0.0.0.0', debug=debug_mode, port=9090)
