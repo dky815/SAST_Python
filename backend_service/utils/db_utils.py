@@ -10,6 +10,8 @@ class DatabaseUtils:
         For select queries. Fetches data from the database and returns as a list of rows.
         The query can include ? placeholders for parameters, which are passed in params.
         '''
+        if not params:
+            return []
         with sqlite3.connect(self.database_name) as conn:
             cursor = conn.cursor()
             if params is None:
@@ -19,12 +21,12 @@ class DatabaseUtils:
             rows = cursor.fetchall()
         return rows
 
-    def update_data(self, query):
+    def update_data(self, query, params):
         '''
         For all table modification queries which make changes to the database
         '''
         with sqlite3.connect(self.database_name) as conn:
             cursor = conn.cursor()
-            cursor.execute(query)
+            cursor.execute(query, params)
             conn.commit()
 
