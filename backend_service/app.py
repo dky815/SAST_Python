@@ -22,7 +22,7 @@ import logging
 import os
 from utils.db_utils import DatabaseUtils
 from utils.file_storage import FileStorage
-from werkzeug.security import generate_password_hash
+from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import timedelta
 import datetime
 
@@ -54,8 +54,8 @@ def _init_app():
                         );''', [])
 
     # Encrypt the password before storing
-    admin_password = generate_password_hash('password1')
-    user_password = generate_password_hash('adminpassword1')
+    user_password = generate_password_hash('password1')
+    admin_password = generate_password_hash('adminpassword1')
 
     db.update_data(f"INSERT INTO users (username, password, privilege) VALUES (?,?,?)", ('user1', user_password, 0))
     db.update_data(f"INSERT INTO users (username, password, privilege) VALUES (?,?,?)", ('admin1', admin_password,1))
@@ -65,9 +65,10 @@ def get_token_expiry_time():
 
 def _check_login():
     auth_token = request.cookies.get('token', None)
+
     if not auth_token:
         app.logger.error("Missing token cookie")
-        return jsonify({'error': "Missing token cookie"}), HTTPStatus.UNAUTHORIZED
+        return "Missing token cookie"
     try:
         # Decode JWT token
         data = jwt.decode(auth_token, SECRET_KEY, algorithms=["HS256"])
@@ -75,33 +76,35 @@ def _check_login():
             return data
         else:
             app.logger.error("Invalid token structure")
-            return jsonify({'error': "Invalid token structure"}), HTTPStatus.UNAUTHORIZED
-    except jwt.DecodeError:
+            return "Invalid token structure"
+    except jwt.DecodeError as e:
         app.logger.error("Token is invalid")
-        return jsonify({'error': "Token is invalid"}), HTTPStatus.UNAUTHORIZED
+        return "Token is invalid"
 
 
 @app.route("/login", methods=["POST"])
 def login():
     username = request.json.get("username")
     password = request.json.get("password")
-    print(username, password)
+
     # Use parameterized queries to prevent SQL injection
-    hashed_password = generate_password_hash(password)
     query = "SELECT * FROM users WHERE username = ?"
-    params = (username)
+    params = [username]
     rows = db.fetch_data(query, params)
-    print(rows)
     if len(rows) != 1:
         app.logger.error("Invalid credentials")
         return jsonify({'error': "Invalid credentials"}), HTTPStatus.UNAUTHORIZED
+    else:
+        if not check_password_hash(rows[0][2], password):
+            app.logger.error("Incorrect password")
+            return jsonify({'error': "Incorrect password"}), HTTPStatus.UNAUTHORIZED
 
     is_user_admin = True if rows[0][-1] == 1 else False
     expiry_time = get_token_expiry_time()
     token = jwt.encode({ 
         "username": username ,
         "is_admin": is_user_admin,
-        "expiry": expiry_time
+        "expiry": str(expiry_time)
     }, SECRET_KEY, algorithm="HS256")
 
     # We are only setting 1 http cookie which will have information along with the expiration time
@@ -119,23 +122,26 @@ def store_file():
     """
     # We are handling the scenario if user is not logged it. Not raising the error from _check_login function.
     data = _check_login()
+
     ## User is not logged in
-    ## NEED TO TEST THIS OUT, this method will change
-    print("-------------")
-    print(data)
-    if isinstance(data, jsonify):
+    if not isinstance(data, dict):
         app.logger.error("Failed to authenticate user")
         return jsonify({'error': "Failed to authenticate user"}), HTTPStatus.UNAUTHORIZED
 
     is_admin = data["is_admin"]
     expiry_time = data["expiry"]
-    if expiry_time < datetime.datetime.utcnow():
+    if datetime.datetime.strptime(expiry_time, '%Y-%m-%d %H:%M:%S.%f') < datetime.datetime.utcnow():
         app.logger.error("Authentication token has expired, login again")
         return jsonify({'error': "Authentication token has expired, login again"}), HTTPStatus.UNAUTHORIZED
 
     if request.method == 'GET':
         filename = request.args.get('filename')
-        return fs.get(filename)
+        try:
+            return fs.get(filename)
+        except Exception as e:
+            app.logger.error("File doesn't exist")
+            return jsonify({'error': "File doesn't exist"}), HTTPStatus.UNAUTHORIZED
+
     elif request.method == 'POST':
         if not is_admin:
             app.logger.error("Need admin access")

@@ -5,7 +5,7 @@ class FileStorage(Storage):
     """
     This class is used to store files.
     """
-    def __init__(self, storage_directory='/Users/raghukapur/private-projects/DevSecOps_Python/object_storage'):
+    def __init__(self, storage_directory='/app/object_storage'):
         self.storage_directory = os.path.abspath(storage_directory)
         if not os.path.exists(self.storage_directory):
             os.makedirs(self.storage_directory, exist_ok=True)
