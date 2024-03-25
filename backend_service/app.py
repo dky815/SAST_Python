@@ -15,7 +15,6 @@ import os
 
 from flask import Flask, request, make_response, escape, jsonify
 import jwt
-import pickle
 from http import HTTPStatus
 import sqlite3
 import logging
